@@ -1,0 +1,25 @@
+# scope-mcp 配置文件模板
+# 复制为 config.yaml 后修改其中的 IP 地址
+
+scope:
+  # 示波器 IP 地址（必填）
+  ip: 192.168.1.100
+
+  # VISA 超时（毫秒）
+  visa_timeout_ms: 15000
+
+  # 默认记录长度
+  record_length_default: 2000000
+
+  # 示波器上截图保存目录（留空则自动检测）
+  # cwd: "C:/Users/Public/Tektronix/TekScope/IMAGE"
+
+server:
+  # HTTP 服务监听地址
+  host: 0.0.0.0
+
+  # HTTP 服务端口
+  port: 8123
+
+  # 截图文件在本地的保存路径
+  screenshot_dir: ./scope_output

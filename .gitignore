@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# 本地配置（每个用户不同）
+config.yaml
+config.local.yaml
+!config.example.yaml
+
+# 截图输出
+scope_output/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# 环境
+.env
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
