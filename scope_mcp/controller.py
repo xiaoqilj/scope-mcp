@@ -193,15 +193,16 @@ class ScopeController:
         m.type.write(meas_type)
         m.source.write(source)
         time.sleep(1.5)
+        r = m.results.currentacq
         return {
             "meas_num": meas_num,
             "type": meas_type,
             "source": source,
-            "value": m.value.query(),
-            "mean": m.mean.query(),
-            "min": m.minimum.query(),
-            "max": m.maximum.query(),
-            "stddev": m.stdev.query(),
+            "value": r.mean.query(),
+            "mean": r.mean.query(),
+            "min": r.minimum.query(),
+            "max": r.maximum.query(),
+            "stddev": r.stddev.query(),
         }
 
     def get_all_measurements(self):
@@ -211,15 +212,16 @@ class ScopeController:
         for i in range(1, 9):
             try:
                 m = self.scope.commands.measurement.meas[i]
-                v = m.value.query()
+                r = m.results.currentacq
+                v = r.mean.query()
                 if v and float(v) not in (9.91e37, 0):
                     results[f"MEAS{i}"] = {
                         "type": m.type.query(),
                         "source": m.source.query(),
                         "value": v,
-                        "mean": m.mean.query(),
-                        "min": m.minimum.query(),
-                        "max": m.maximum.query(),
+                        "mean": r.mean.query(),
+                        "min": r.minimum.query(),
+                        "max": r.maximum.query(),
                     }
             except Exception:
                 continue
