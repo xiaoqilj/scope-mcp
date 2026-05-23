@@ -230,6 +230,165 @@ class ScopeController:
     # ==========================
     # 8. 截图
     # ==========================
+    def _is_sx_model(self):
+        """检测是否为 DPO75902SX 等 59G 系列"""
+        return "75902" in (self.scope.model or "")
+
+    def _sx_cwd(self):
+        """SX 系列 CWD 路径"""
+        return "C:/Users/Tek_Local_Admin/Tektronix/TekScope"
+
+    def _screenshot_sx_vxi_save(self, filename):
+        """SX 方案1: VXI-11 SAVE:IMAGe + raw socket READFile"""
+        cwd = self._sx_cwd()
+        fullpath = f"{cwd}/{filename}"
+
+        # 删除旧文件
+        try:
+            self.scope.write(f'FILESystem:DELete "{fullpath}"')
+        except Exception:
+            pass
+        time.sleep(0.3)
+
+        # SAVE:IMAGe via VXI-11
+        self.scope.write(f'SAVE:IMAGe "{fullpath}"')
+        time.sleep(5.0)
+
+        # raw socket READFile（VXI-11 query_raw_binary 在 SX 上会超时）
+        try:
+            import socket
+            sock = socket.socket()
+            sock.settimeout(10)
+            sock.connect((self.ip, 4000))
+            time.sleep(0.3)
+
+            def drain():
+                sock.settimeout(1)
+                try:
+                    while True:
+                        c = sock.recv(65536)
+                        if not c:
+                            break
+                except:
+                    pass
+
+            drain()
+            sock.send(f'FILESystem:CWD "{cwd}"\n'.encode())
+            time.sleep(0.3)
+            drain()
+            sock.send(f'FILESystem:READFile "{filename}"\n'.encode())
+            time.sleep(3)
+            raw = b""
+            sock.settimeout(5)
+            try:
+                while True:
+                    c = sock.recv(65536)
+                    if not c:
+                        break
+                    raw += c
+            except:
+                pass
+            sock.close()
+            if len(raw) >= 8 and raw[:8] == b'\x89PNG\r\n\x1a\n':
+                return raw
+            logger.warning(f"SX SAVE+READ: {len(raw)} bytes, not PNG")
+            return None
+        except Exception as e:
+            logger.warning(f"SX SAVE+READ error: {e}")
+            return None
+
+    def _screenshot_sx_display_data(self):
+        """SX 方案2: raw socket DISPlay:DATA?"""
+        try:
+            import socket
+            sock = socket.socket()
+            sock.settimeout(15)
+            sock.connect((self.ip, 4000))
+            time.sleep(0.3)
+
+            def drain():
+                sock.settimeout(1)
+                try:
+                    while True:
+                        c = sock.recv(65536)
+                        if not c:
+                            break
+                except:
+                    pass
+
+            drain()
+            sock.send(b"DISPlay:DATA:FORMat PNG\n")
+            time.sleep(0.3)
+            drain()
+            sock.send(b"DISPlay:DATA?\n")
+            time.sleep(3)
+            raw = b""
+            sock.settimeout(10)
+            try:
+                while True:
+                    c = sock.recv(65536)
+                    if not c:
+                        break
+                    raw += c
+            except:
+                pass
+            sock.close()
+
+            # 搜索 PNG header（可能有 SCPI header 在前面）
+            for off in range(40):
+                chunk = raw[off:]
+                if chunk[:8] == b'\x89PNG\r\n\x1a\n':
+                    return chunk
+            if raw:
+                logger.warning(f"DISPlay:DATA? got {len(raw)} bytes, no PNG header")
+            return None
+        except Exception as e:
+            logger.warning(f"DISPlay:DATA? error: {e}")
+            return None
+
+    def _screenshot_sx_untitled(self):
+        """SX 方案3: 读 Screen Captures/untitled.png"""
+        try:
+            import socket
+            sock = socket.socket()
+            sock.settimeout(8)
+            sock.connect((self.ip, 4000))
+            time.sleep(0.3)
+
+            def drain():
+                sock.settimeout(1)
+                try:
+                    while True:
+                        c = sock.recv(65536)
+                        if not c:
+                            break
+                except:
+                    pass
+
+            drain()
+            sock.send(b'FILESystem:CWD "C:/Users/Tek_Local_Admin/Tektronix/TekScope/Screen Captures"\n')
+            time.sleep(0.3)
+            drain()
+            sock.send(b'FILESystem:READFile "untitled.png"\n')
+            time.sleep(3)
+            raw = b""
+            sock.settimeout(5)
+            try:
+                while True:
+                    c = sock.recv(65536)
+                    if not c:
+                        break
+                    raw += c
+            except:
+                pass
+            sock.close()
+            if len(raw) >= 8 and raw[:8] == b'\x89PNG\r\n\x1a\n':
+                return raw
+            return None
+        except Exception as e:
+            logger.warning(f"SX untitled read error: {e}")
+            return None
+
     def screenshot(self, filename=None, save_local=True):
         """截图并返回 base64
 
@@ -237,12 +396,35 @@ class ScopeController:
         - SAVE:IMAGE 用 VXI-11 写（而非 HARDCOPY START）
         - FILESystem:READFile 通过 tm_devices query_raw_binary 读取
         - 截图前删除旧文件避免残留
+        - SX 系列 (FW 10.15.1) 走 raw socket 多方案回退
         """
         self._ensure_connected()
         if not filename:
             filename = f"scope_{int(time.time())}.png"
 
-        # 获取示波器上的 CWD
+        # SX 系列特殊处理 — 文件写操作被固件限制
+        if self._is_sx_model():
+            raw = self._screenshot_sx_vxi_save(filename)
+            if raw:
+                logger.info("SX screenshot via VXI-11 SAVE + raw READ")
+                return self._save_and_encode(raw, filename, save_local)
+
+            raw = self._screenshot_sx_display_data()
+            if raw:
+                logger.info("SX screenshot via raw DISPlay:DATA?")
+                return self._save_and_encode(raw, filename, save_local)
+
+            raw = self._screenshot_sx_untitled()
+            if raw:
+                logger.info("SX screenshot via Screen Captures/untitled.png")
+                return self._save_and_encode(raw, filename, save_local)
+
+            return {
+                "error": "SX screenshot failed (FW 10.15.1 限制: SAVE:IMAGe 无文件写入, "
+                         "DISPlay:DATA? 超时). 请手动通过 Web 界面或物理连接截图。"
+            }
+
+        # 非 SX — 原有 VXI-11 方式
         try:
             cwd = self.scope.query("FILESystem:CWD?").strip().strip('"')
         except Exception:
@@ -257,7 +439,7 @@ class ScopeController:
             pass
         time.sleep(0.3)
 
-        # SAVE:IMAGE（用 IMAGE 而非 IMAGe——实际测试 IMAGE 也兼容）
+        # SAVE:IMAGE
         self.scope.write(f'SAVE:IMAGe "{fullpath}"')
         time.sleep(2.0)
 
@@ -267,6 +449,10 @@ class ScopeController:
         if len(raw) <= 100:
             return {"error": f"read failed: {len(raw)} bytes"}
 
+        return self._save_and_encode(raw, filename, save_local)
+
+    def _save_and_encode(self, raw, filename, save_local):
+        """保存并编码 PNG 数据"""
         out_path = None
         if save_local and self._screenshot_dir:
             out_path = os.path.join(self._screenshot_dir, filename)

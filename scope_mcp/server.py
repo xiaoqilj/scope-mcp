@@ -79,16 +79,33 @@ def create_app(controller: ScopeController) -> "Flask":
 
     @app.route("/screenshot", methods=["GET"])
     def get_screenshot():
-        """GET /screenshot — 直接返回 PNG 图片"""
+        """GET /screenshot — 直接返回 PNG 图片
+
+        Query params:
+          - scope_ip: 可选，指定其他示波器 IP（默认使用启动时绑定的示波器）
+        """
+        target_ip = request.args.get("scope_ip")
+
         try:
-            result = controller.screenshot(save_local=True)
-            if "image_base64" in result:
+            if target_ip:
+                # 创建临时控制器截指定示波器的图
                 import base64
-                img = base64.b64decode(result["image_base64"])
+                from scope_mcp.controller import ScopeController
+                temp = ScopeController(target_ip, visa_timeout_ms=30000)
+                temp.connect()
+                result = temp.screenshot(save_local=False)
+                temp.close()
+            else:
+                result = controller.screenshot(save_local=True)
+
+            if "image_base64" in result:
+                import base64 as b64
+                img = b64.b64decode(result["image_base64"])
                 return Response(img, mimetype="image/png")
             else:
                 return jsonify(result), 500
         except Exception as e:
+            logger.exception(f"screenshot error")
             return jsonify({"error": str(e)}), 500
 
     return app
